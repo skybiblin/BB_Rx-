@@ -1,0 +1,359 @@
+---
+title: "Trees"
+author: "Kate and Sky"
+date: "May 24, 2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+
+Load libraries and scripts
+```{r}
+library(gsheet) # load googlesheets
+
+library(dplyr) # data summary
+
+library(ggplot2) #plotting
+library(ggthemes) #plotting
+library(cowplot) #pretttier plots
+
+library(lme4) ## run basic glmm & their fit tests
+library(lmerTest) ## get p-values for lme4 & glmmADMB
+library(MuMIn)
+library(effects) #extracting model estimtes for plotting
+library(effects) #extract model coef for plotting
+# library(glmmADMB) ## zero-inflated residuals
+
+#at http://glmm.wikidot.com/faq
+#at R protool_quasi AIC ben bolker.pdf
+overdisp_fun <- function(model) {
+     ## number of variance parameters in 
+     ##   an n-by-n variance-covariance matrix
+     vpars <- function(m) {
+          nrow(m)*(nrow(m)+1)/2
+     }
+     model.df <- sum(sapply(VarCorr(model),vpars))+length(fixef(model))
+     rdf <- nrow(model.frame(model))-model.df
+     rp <- residuals(model,type="pearson")
+     Pearson.chisq <- sum(rp^2)
+     prat <- Pearson.chisq/rdf
+     pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+     c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+     
+     
+}
+
+## this function plots the residual from a GLMM for one random effect variable
+
+## "model_output" is the name of your glmm model
+## "dats" is the name of the data you used in the model
+## "random_effect" is the random effect you are examining
+## "graph_title" is a "text string" that is the plot's title
+
+## EX: TestModelFit_residuals(mod.shrub.6trt, shrub, shrub$Transect, "Shrub & Transect")
+
+TestModelFit_residuals <- function(model_output, dats, random_effect, graph_title) {
+
+     layout(matrix(1:2, nrow=2))
+
+     boxplot(residuals(model_output) ~ random_effect, data = dats, main = graph_title, ylab = "Residuals")
+
+     plot(fitted(model_output), residuals(model_output), xlab = "Fitted Values", ylab = "Residuals")
+
+     abline(h=0, lty=2)
+     
+     lines(smooth.spline(fitted(model_output), residuals(model_output)))
+
+}
+
+
+```
+
+
+Load data
+*may need to run twice
+```{r}
+url <- 'https://docs.google.com/spreadsheets/d/1i__owZyfRSucXSE9_FHx383GUDv2HUz0R-B2aVBnOhQ/edit#gid=1545246028'
+data <- gsheet2tbl(url)
+head(data)
+
+url <- 'https://docs.google.com/spreadsheets/d/1i__owZyfRSucXSE9_FHx383GUDv2HUz0R-B2aVBnOhQ/edit#gid=941715583'
+meta <- gsheet2tbl(url)
+head(meta)
+
+```
+
+Prepare data to use and rename input data so that you preseve it
+```{r}
+dats <- data 
+```
+
+Join meta data and summarized plot data
+```{r}
+dats <- merge(x=dats, y=meta, by="plot_number")
+```
+
+Fix data issues
+```{r}
+dats$Rx <- as.factor(dats$Rx)
+unique(dats$Rx)
+```
+
+#Tree density 
+Graph raw data
+- histogram of y variable
+```{r}
+head(dats)
+
+dats$tree_density <- dats$COUNTA.of.tree_sp
+
+range(dats$tree_density)
+
+hist(dats$tree_density)
+```
+Graph raw data
+- colinearity of explanatory variables
+```{r}
+plot(x=dats$Slope, y=dats$Aspect)
+
+plot(x=dats$Slope, y=dats$canopy_cover)
+plot(x=dats$Aspect, y=dats$canopy_cover)
+```
+
+Model
+GLMER FAQ: https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+highlight and ctrl-shift-C to add or remove hashes
+```{r}
+colnames(dats)
+
+#Basic
+# mod <- lmer(tree_density ~
+#                        Heat_load + Rx +
+#                       (1|Site),
+#                     data=dats)
+
+#Add model family 
+# mod <-  glmer(tree_density ~
+#                        Heat_load + Rx +
+#                       (1|Site),
+#                     data=dats,
+#               family = "poisson")
+
+#Add observation effect eg plot_number 
+mod <-  glmer(tree_density ~
+                       Heat_load +  Rx +
+                      (1|Site)  + (1|obs) ,
+                    data=dats,
+              family = "poisson")
+
+#Add optimizer
+# mod <-  glmer(tree_density ~
+#                        Heat_load + Rx +  
+#                       (1|Site)  + (1|obs) ,
+#                     data=dats, 
+#               family = "poisson",
+#                        control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=1e9)))
+
+
+```
+
+P needs to be more than 0.05 (eg not signification)
+```{r}
+overdisp_fun(mod)
+```
+
+Q:Q plot needs to not show many major trends. Although some ignore it altogether....
+```{r}
+plot(mod)
+```
+
+Examine significant explanaotry variables
+```{r}
+summary(mod)
+```
+
+
+The marginal R^2 (R2m) describes portion of variability described by fixed effects (eg explanaotory variables) and R2C described additional variation described by random effect
+```{r}
+r.squaredGLMM(mod)
+```
+
+Get the effect size of Rx
+```{r}
+ef <- effect("Rx", mod)
+summary(ef)
+```
+
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+
+Caption. Count of coast redwood basal sprouts for plots with and without prescribed fire. Grey bars are the count predications of basal sprouts and the bar represent the 95% confidence interval. 
+Google ggplot cookbook axis labels
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=Rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Tree density") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, 5, 10, 15)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+
+
+#Basal area
+Graph raw data
+- histogram of y variable
+```{r}
+head(dats)
+
+range(dats$SUM.of.Basal_area)
+
+dats$SUM.of.Basal_area <- as.integer(dats$SUM.of.Basal_area)
+
+hist(dats$SUM.of.Basal_area)
+```
+
+Need to pull from corrected tree data sheet rather than pivot table
+```{r}
+head(dats)
+
+dats$Living.Basal_area <- 0
+dats$Living.Basal_area[dats$SUM.of.top_kill == 0] <- dats$SUM.of.Basal_area
+dats$Living.Basal_area[dats$SUM.of.mortality == 0] <- dats$SUM.of.Basal_area
+
+range(dats$Living.Basal_area)
+
+hist(dats$Living.Basal_area)
+```
+
+Model
+GLMER FAQ: https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+highlight and ctrl-shift-C to add or remove hashes
+
+#Basic model
+## Basic model is overdispersed. Not valid.
+```{r}
+colnames(dats)
+mod <- lmer(SUM.of.Basal_area ~
+                       Heat_load + Rx +
+                      (1|Site),
+                    data=dats)
+
+overdisp_fun(mod)
+```
+
+#Add model family 
+```{r}
+
+# mod <-  glmer(SUM.of.Basal_area ~
+#                        Heat_load + Rx +
+#                       (1|Site),
+#                     data=dats,
+#               family = "poisson")
+
+#Add observation effect eg plot_number 
+mod <-  glmer(SUM.of.Basal_area ~
+                       Heat_load +  Rx +
+                      (1|Site)  + (1|obs) ,
+                    data=dats,
+              family = "poisson")
+
+#Add optimizer
+# mod <-  glmer(SUM.of.Basal_area ~
+#                        Heat_load + Rx +  
+#                       (1|Site)  + (1|obs) ,
+#                     data=dats, 
+#               family = "poisson",
+#                        control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=1e9)))
+
+
+```
+
+P needs to be more than 0.05 (eg not signification)
+```{r}
+overdisp_fun(mod)
+```
+
+Q:Q plot needs to not show many major trends. Although some ignore it altogether....
+```{r}
+plot(mod)
+```
+
+Examine significant explanaotry variables
+```{r}
+summary(mod)
+```
+
+
+The marginal R^2 (R2m) describes portion of variability described by fixed effects (eg explanaotory variables) and R2C described additional variation described by random effect
+```{r}
+r.squaredGLMM(mod)
+```
+
+Get the effect size of Rx
+```{r}
+ef <- effect("Rx", mod.basal_area)
+summary(ef)
+```
+
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+
+Caption. Count of coast redwood basal sprouts for plots with and without prescribed fire. Grey bars are the count predications of basal sprouts and the bar represent the 95% confidence interval. 
+Google ggplot cookbook axis labels
+```{r}
+mod.basal_area.plot <- 
+  ggplot(data=x, aes(x=Rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Basal area (insert unit here)") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, 5, 10, 15)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("No Rx", "Rx")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.basal_area.plot 
+
+pdf('mod.basal_area.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
