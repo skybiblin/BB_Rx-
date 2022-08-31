@@ -1,0 +1,382 @@
+---
+title: "fuel practice"
+author: "Sky Biblin"
+date: "2022-08-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(readxl)
+library(janitor)
+library(dplyr) # data summary
+
+library(ggplot2) #plotting
+library(ggthemes) #plotting
+library(cowplot) #pretttier plots
+
+library(lme4) ## run basic glmm & their fit tests
+library(lmerTest) ## get p-values for lme4 & glmmADMB
+library(MuMIn)
+library(effects) #extracting model estimtes for plotting
+library(effects) #extract model coef for plotting
+# library(glmmADMB) ## zero-inflated residuals
+
+#at http://glmm.wikidot.com/faq
+#at R protool_quasi AIC ben bolker.pdf
+overdisp_fun <- function(model) {
+     ## number of variance parameters in 
+     ##   an n-by-n variance-covariance matrix
+     vpars <- function(m) {
+          nrow(m)*(nrow(m)+1)/2
+     }
+     model.df <- sum(sapply(VarCorr(model),vpars))+length(fixef(model))
+     rdf <- nrow(model.frame(model))-model.df
+     rp <- residuals(model,type="pearson")
+     Pearson.chisq <- sum(rp^2)
+     prat <- Pearson.chisq/rdf
+     pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+     c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+     
+     
+}
+
+## this function plots the residual from a GLMM for one random effect variable
+
+## "model_output" is the name of your glmm model
+## "dats" is the name of the data you used in the model
+## "random_effect" is the random effect you are examining
+## "graph_title" is a "text string" that is the plot's title
+
+## EX: TestModelFit_residuals(mod.shrub.6trt, shrub, shrub$Transect, "Shrub & Transect")
+
+TestModelFit_residuals <- function(model_output, dats, random_effect, graph_title) {
+
+     layout(matrix(1:2, nrow=2))
+
+     boxplot(residuals(model_output) ~ random_effect, data = dats, main = graph_title, ylab = "Residuals")
+
+     plot(fitted(model_output), residuals(model_output), xlab = "Fitted Values", ylab = "Residuals")
+
+     abline(h=0, lty=2)
+     
+     lines(smooth.spline(fitted(model_output), residuals(model_output)))
+
+}
+
+
+```
+```{r}
+
+Main_Datasheet <- read_excel("C:/Users/18052/Desktop/SJSU/Real Deal/BB_Rx--main/Main_Datasheet.xlsx")
+data_clean = clean_names(Main_Datasheet)
+```
+fix binary data issue
+```{r}
+data_clean$rx <- as.factor(data_clean$rx)
+unique(data_clean$rx)
+```
+Graph raw data
+- colinearity of explanatory variables
+```{r}
+plot(x=data_clean$slope, y=data_clean$aspect)
+plot(x=data_clean$slope, y=data_clean$canopy_cover)
+plot(x=data_clean$slope, y=data_clean$heat_load)
+plot(x=data_clean$slope, y=data_clean$basal_area)
+
+plot(x=data_clean$aspect, y=data_clean$canopy_cover)
+plot(x=data_clean$aspect, y=data_clean$heat_load)
+plot(x=data_clean$aspect, y=data_clean$basal_area)
+
+plot(x=data_clean$canopy_cover, y=data_clean$aspect)
+plot(x=data_clean$canopy_cover, y=data_clean$heat_load)
+plot(x=data_clean$canopy_cover, y=data_clean$basal_area)
+
+plot(x=data_clean$basal_area, y=data_clean$aspect)
+plot(x=data_clean$basal_area, y=data_clean$canopy_cover)
+plot(x=data_clean$basal_area, y=data_clean$heat_load)
+
+```
+Model
+GLMER FAQ: https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+highlight and ctrl-shift-C to add or remove hashes
+```{r}
+colnames(data_clean)
+```
+#cwf
+```{r}
+data_clean$cwf <- as.integer(data_clean$cwf)
+
+```
+
+```{r}
+mod <- glmer(data = data_clean, cwf ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+
+Get the effect size of Rx
+```{r}
+ef <- effect("rx" , mod)
+summary(ef)
+```
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Course Woody Fuels") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, .1, .3, .5)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+#fwf
+```{r}
+data_clean$fwf <- as.integer(data_clean$fwf)
+
+```
+```{r}
+mod <- glmer(data = data_clean, fwf ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+
+
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+```{r}
+ef <- effect("rx" , mod)
+summary(ef)
+```
+```{r}
+x <- as.data.frame(ef)
+x
+```
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Fine Woody Fuels") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, 5, 10, 15)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+#fuel depth
+```{r}
+data_clean$fuel_depth <- as.integer(data_clean$fuel_depth)
+
+```
+
+```{r}
+mod <- glmer(data = data_clean, fuel_depth ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+Get the effect size of Rx
+```{r}
+ef <- effect("rx" , mod)
+summary(ef)
+```
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("fuel depth") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, .5, 1)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+#Litter Depth
+```{r}
+data_clean$litter_depth <- as.integer(data_clean$litter_depth)
+
+```
+
+```{r}
+mod <- glmer(data = data_clean, litter_depth ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+
+
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Litter depth") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, .5, 1)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+#aerial fuels
+ 
+```{r}
+
+Main_Datasheet <- read_excel("C:/Users/18052/Desktop/SJSU/Real Deal/BB_Rx--main/Main_Datasheet.xlsx")
+data_clean = clean_names(Main_Datasheet)
+
+```
+fix binary data issue
+```{r}
+data_clean$rx <- as.factor(data_clean$rx)
+unique(data_clean$rx)
+```
+
+```{r}
+data_clean$sum_top_kill <- as.integer(data_clean$sum_top_kill)
+```
+```{r}
+mod <- glmer(data = data_clean, sum_top_kill ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+Get the effect size of Rx
+```{r}
+ef <- effect("rx" , mod)
+summary(ef)
+```
+Prepare to plot model predications
+See https://www.r-bloggers.com/2014/08/plotting-mixed-effects-model-results-with-effects-package/
+-convert effect estimates to data frame for plotting
+```{r}
+x <- as.data.frame(ef)
+x
+```
+```{r}
+mod.plot <- 
+  ggplot(data=x, aes(x=rx, y=fit)) + 
+  geom_bar(colour="black", stat="identity") +
+  geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4, position=position_dodge(width=0.9)) +
+  xlab("") + 
+  ylab("Aerial Fuels") + 
+  ggtitle("") +
+  theme_tufte() +
+        theme(text=element_text(size=21, family = "sans")) +
+       scale_y_continuous(breaks=c(0, 5, 10, 15)) +
+  scale_x_discrete(breaks=c(0, 1), 
+                      labels=c("Absent", "Present")) +
+    expand_limits(y=0) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+mod.plot 
+
+pdf('mod.plot.pdf', width = 16, height = 10)
+mod.plot 
+dev.off()
+```
+#canopy retained 
+
+```{r}
+data_clean$percent_canopy_retained <- as.integer(data_clean$percent_canopy_retained)
+```
+```{r}
+mod <- glmer(data = data_clean, percent_canopy_retained ~ heat_load + rx + (1|site) + (1|plot_number), family = "poisson")
+plot(mod)
+```
+```{r}
+ summary(mod)
+```
+```{r}
+r.squaredGLMM(mod)
+```
+```{r}
+ef <- effect("rx" , mod)
+summary(ef)
+```
